@@ -1,0 +1,194 @@
+
+########FASTQC AND TRIMMING
+#!/bin/bash
+#SBATCH -A pccr                 # Allocation name (replace with your allocation if different)
+#SBATCH -t 48:00:00             # Time limit
+#SBATCH -N 1                    # Number of nodes
+#SBATCH -n 16                   # Number of tasks (CPUs)
+#SBATCH --job-name=atac_seq_qc_and_trimming_caki2
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=atac_seq_qc_and_trimming_caki2-%J-%u.err
+#SBATCH --output=atac_seq_qc_and_trimming_caki2-%J-%u.out
+
+# Load required modules
+module load biocontainers
+module load fastqc/0.11.9
+module load trimmomatic/0.39
+
+# Create directories for outputs
+mkdir -p /depot/edykhui/data/ming/atac_seq/fastqc_caki2
+mkdir -p /depot/edykhui/data/ming/atac_seq/trimmed_caki2
+mkdir -p /depot/edykhui/data/ming/atac_seq/logs_caki2
+
+# Paths
+ADAPTERS=/depot/edykhui/data/ming/atac2/NexteraPE-PE.fa
+RAW_DATA_DIR=/depot/edykhui/data/H202SC24042006/X202SC24042006-Z01-F001/usftp21.novogene.com/01.RawData
+OUTPUT_FASTQC_DIR=/depot/edykhui/data/ming/atac_seq/fastqc_caki2
+OUTPUT_TRIMMED_DIR=/depot/edykhui/data/ming/atac_seq/trimmed_caki2
+
+# Samples
+samples=("A_Caki2_Empty_1" "A_Caki2_Empty_2" "A_Caki2_Empty_3" "A_Caki2_PB1_1" "A_Caki2_PB1_2" "A_Caki2_PB1_3" "A_Caki2_VHL_1" "A_Caki2_VHL_2" "A_Caki2_VHL_3" "A_Caki2_PB1_VHL_1" "A_Caki2_PB1_VHL_2" "A_Caki2_PB1_VHL_3")
+
+# Run FastQC
+for sample in "${samples[@]}"; do
+    fastqc $RAW_DATA_DIR/$sample/*_1.fq.gz -o $OUTPUT_FASTQC_DIR
+    fastqc $RAW_DATA_DIR/$sample/*_2.fq.gz -o $OUTPUT_FASTQC_DIR
+done
+
+# Run Trimmomatic
+for sample in "${samples[@]}"; do
+    trimmomatic PE -phred33 \
+        $RAW_DATA_DIR/$sample/*_1.fq.gz $RAW_DATA_DIR/$sample/*_2.fq.gz \
+        $OUTPUT_TRIMMED_DIR/${sample}_1_paired.fq.gz $OUTPUT_TRIMMED_DIR/${sample}_1_unpaired.fq.gz \
+        $OUTPUT_TRIMMED_DIR/${sample}_2_paired.fq.gz $OUTPUT_TRIMMED_DIR/${sample}_2_unpaired.fq.gz \
+        ILLUMINACLIP:$ADAPTERS:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+done
+
+
+############SAM TO BAM and THEN BMA MEM
+#!/bin/bash
+#SBATCH -A pccr                 # Allocation name (replace with your allocation if different)
+#SBATCH -t 48:00:00             # Time limit
+#SBATCH -N 1                    # Number of nodes
+#SBATCH -n 16                   # Number of tasks (CPUs)
+#SBATCH --job-name=bwa_mapping_caki2
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=bwa_mapping_caki2-%J-%u.err
+#SBATCH --output=bwa_mapping_caki2-%J-%u.out
+
+# Load required modules
+module load bwa/0.7.17
+module load samtools/1.10
+
+# Paths
+REF_GENOME=/path/to/hg38.fasta
+TRIMMED_DIR=/depot/edykhui/data/ming/atac_seq/trimmed_caki2
+ALIGN_DIR=/depot/edykhui/data/ming/atac_seq/aligned_caki2
+
+# Samples
+samples=("A_Caki2_Empty_1" "A_Caki2_Empty_2" "A_Caki2_Empty_3" "A_Caki2_PB1_1" "A_Caki2_PB1_2" "A_Caki2_PB1_3" "A_Caki2_VHL_1" "A_Caki2_VHL_2" "A_Caki2_VHL_3" "A_Caki2_PB1_VHL_1" "A_Caki2_PB1_VHL_2" "A_Caki2_PB1_VHL_3")
+
+# Create alignment directory if it doesn't exist
+mkdir -p $ALIGN_DIR
+
+# Function for mapping and processing
+process_sample() {
+    local sample_name=$1
+    local sam_file=$ALIGN_DIR/${sample_name}.sam
+    local unsorted_bam_file=$ALIGN_DIR/${sample_name}_unsorted.bam
+    local bam_file=$ALIGN_DIR/${sample_name}.bam
+
+    echo "$(date): Starting BWA-MEM for $sample_name"
+    bwa mem -t 8 -k 19 -w 100 -r 1.0 $REF_GENOME \
+        $TRIMMED_DIR/${sample_name}_1_paired.fq.gz $TRIMMED_DIR/${sample_name}_2_paired.fq.gz \
+        > $sam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): BWA-MEM failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Converting SAM to BAM for $sample_name"
+    samtools view -Sb $sam_file > $unsorted_bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): samtools view failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Sorting BAM for $sample_name"
+    samtools sort $unsorted_bam_file -o $bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): samtools sort failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Indexing BAM for $sample_name"
+    samtools index $bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): samtools index failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    # Remove intermediate SAM and unsorted BAM files
+    rm $sam_file
+    rm $unsorted_bam_file
+    
+    echo "$(date): Finished processing $sample_name."
+}
+
+# Process each sample
+for sample in "${samples[@]}"; do
+    process_sample $sample
+done
+
+###########remove_mitochondrial
+#!/bin/bash
+#SBATCH -A pccr               # Allocation name 
+#SBATCH -t 12:00:00           # Time limit
+#SBATCH -N 1                  # Number of nodes
+#SBATCH -n 1                  # Number of tasks
+#SBATCH --cpus-per-task=4     # Number of CPUs per task
+#SBATCH --mem=32G             # Memory per node
+#SBATCH --job-name=remove_mitochondrial_reads_caki2
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=remove_mitochondrial_reads_caki2-%J-%u.err
+#SBATCH --output=remove_mitochondrial_reads_caki2-%J-%u.out
+
+module --force purge
+module load biocontainers
+module load samtools
+
+# Define paths
+ALIGN_DIR="/depot/edykhui/data/ming/atac_seq/aligned_caki2"
+MITOCHONDRIAL_BAM_DIR="/depot/edykhui/data/ming/atac_seq/mitochondrial_removed_caki2"
+
+# Create output directory for BAM files with mitochondrial reads removed
+mkdir -p $MITOCHONDRIAL_BAM_DIR
+
+# Function to remove mitochondrial reads from a sample
+remove_mitochondrial_reads() {
+    local sample_name=$1
+    local bam_file=$ALIGN_DIR/${sample_name}.bam
+    local output_bam_file=$MITOCHONDRIAL_BAM_DIR/${sample_name}.rmChrM.bam
+    
+    if [ ! -f "$bam_file" ]; then
+        echo "$(date): BAM file $bam_file does not exist, skipping..."
+        return
+    fi
+    
+    echo "$(date): Removing mitochondrial reads for $sample_name..."
+    samtools view -h $bam_file | grep -v chrM | samtools sort -O bam -o $output_bam_file -
+    if [ $? -ne 0 ]; then
+        echo "$(date): Removing mitochondrial reads failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    samtools index $output_bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): Indexing the BAM file without mitochondrial reads failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Finished removing mitochondrial reads for $sample_name."
+}
+
+# List of Caki2 samples to process
+samples=(
+    "A_Caki2_Empty_1"
+    "A_Caki2_Empty_2"
+    "A_Caki2_Empty_3"
+    "A_Caki2_PB1_1"
+    "A_Caki2_PB1_2"
+    "A_Caki2_PB1_3"
+    "A_Caki2_PB1_VHL_1"
+    "A_Caki2_PB1_VHL_2"
+    "A_Caki2_PB1_VHL_3"
+    "A_Caki2_VHL_1"
+    "A_Caki2_VHL_2"
+    "A_Caki2_VHL_3"
+)
+
+# Process each sample
+for sample in "${samples[@]}"; do
+    remove_mitochondrial_reads $sample
+done
+######3
