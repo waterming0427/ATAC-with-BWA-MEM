@@ -191,4 +191,323 @@ samples=(
 for sample in "${samples[@]}"; do
     remove_mitochondrial_reads $sample
 done
-######3
+
+######MARK DUPLICATE
+#!/bin/bash
+#SBATCH -A pccr               # Allocation name 
+#SBATCH -t 24:00:00           # Time limit
+#SBATCH -N 1                  # Number of nodes
+#SBATCH -n 1                  # Number of tasks
+#SBATCH --cpus-per-task=4     # Number of CPUs per task
+#SBATCH --mem=32G             # Memory per node
+#SBATCH --job-name=mark_duplicates
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=%x-%J-%u.err
+#SBATCH --output=%x-%J-%u.out
+
+module --force purge
+module load biocontainers
+module load picard
+
+# Define paths
+MITOCHONDRIAL_BAM_DIR="/depot/edykhui/data/ming/atac_seq/mitochondrial_removed"
+MARKED_DUPLICATES_DIR="/depot/edykhui/data/ming/atac_seq/marked_duplicates"
+
+# Create output directory for BAM files with duplicates marked
+mkdir -p $MARKED_DUPLICATES_DIR
+
+# Function to mark duplicates for a sample
+mark_duplicates() {
+    local sample_name=$1
+    local bam_file=$MITOCHONDRIAL_BAM_DIR/${sample_name}.rmChrM.bam
+    local output_bam_file=$MARKED_DUPLICATES_DIR/${sample_name}.marked.bam
+    local metrics_file=$MARKED_DUPLICATES_DIR/${sample_name}.dup.metrics
+    
+    if [ ! -f "$bam_file" ]; then
+        echo "$(date): BAM file $bam_file does not exist, skipping..."
+        return
+    fi
+    
+    echo "$(date): Marking duplicates for $sample_name..."
+    picard MarkDuplicates \
+        I=$bam_file \
+        O=$output_bam_file \
+        M=$metrics_file \
+        REMOVE_DUPLICATES=false \
+        CREATE_INDEX=true \
+        VALIDATION_STRINGENCY=LENIENT \
+        TMP_DIR=.
+    if [ $? -ne 0 ]; then
+        echo "$(date): Marking duplicates failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Finished marking duplicates for $sample_name."
+}
+
+# List of samples to process
+samples=(
+    "A_RCC4_Empty_1"
+    "A_RCC4_Empty_2"
+    "A_RCC4_Empty_3"
+    "A_RCC4_PB1_1"
+    "A_RCC4_PB1_2"
+    "A_RCC4_PB1_3"
+    "A_RCC4_PB1_VHL_1"
+    "A_RCC4_PB1_VHL_2"
+    "A_RCC4_PB1_VHL_3"
+    "A_RCC4_VHL_1"
+    "A_RCC4_VHL_2"
+    "A_RCC4_VHL_3"
+)
+
+# Process each sample
+for sample in "${samples[@]}"; do
+    mark_duplicates $sample
+done
+
+
+
+######################REMOVE DUPLICATES
+#!/bin/bash
+#SBATCH -A pccr               # Allocation name 
+#SBATCH -t 24:00:00           # Time limit
+#SBATCH -N 1                  # Number of nodes
+#SBATCH -n 1                  # Number of tasks
+#SBATCH --cpus-per-task=4     # Number of CPUs per task
+#SBATCH --mem=32G             # Memory per node
+#SBATCH --job-name=filter_alignments
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=%x-%J-%u.err
+#SBATCH --output=%x-%J-%u.out
+
+module --force purge
+module load biocontainers
+module load samtools
+
+# Define paths
+MARKED_DUPLICATES_DIR="/depot/edykhui/data/ming/atac_seq/marked_duplicates"
+FILTERED_BAM_DIR="/depot/edykhui/data/ming/atac_seq/filtered_bam"
+
+# Create output directory for filtered BAM files
+mkdir -p $FILTERED_BAM_DIR
+
+# Function to filter alignments for a sample
+filter_alignments() {
+    local sample_name=$1
+    local bam_file=$MARKED_DUPLICATES_DIR/${sample_name}.marked.bam
+    local output_bam_file=$FILTERED_BAM_DIR/${sample_name}.filtered.bam
+    
+    if [ ! -f "$bam_file" ]; then
+        echo "$(date): BAM file $bam_file does not exist, skipping..."
+        return
+    fi
+    
+    echo "$(date): Filtering alignments for $sample_name..."
+    samtools view -h -b -f 2 -F 1548 -q 30 $bam_file | samtools sort -o $output_bam_file -
+    if [ $? -ne 0 ]; then
+        echo "$(date): Filtering alignments failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    samtools index $output_bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): Indexing the filtered BAM file failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Finished filtering alignments for $sample_name."
+}
+
+# List of samples to process
+samples=(
+    "A_RCC4_Empty_1"
+    "A_RCC4_Empty_2"
+    "A_RCC4_Empty_3"
+    "A_RCC4_PB1_1"
+    "A_RCC4_PB1_2"
+    "A_RCC4_PB1_3"
+    "A_RCC4_PB1_VHL_1"
+    "A_RCC4_PB1_VHL_2"
+    "A_RCC4_PB1_VHL_3"
+    "A_RCC4_VHL_1"
+    "A_RCC4_VHL_2"
+    "A_RCC4_VHL_3"
+)
+
+# Process each sample
+for sample in "${samples[@]}"; do
+    filter_alignments $sample
+done
+
+
+
+############REMOVE BLACKLIST
+
+#!/bin/bash
+#SBATCH -A pccr               # Allocation name 
+#SBATCH -t 24:00:00           # Time limit
+#SBATCH -N 1                  # Number of nodes
+#SBATCH -n 1                  # Number of tasks
+#SBATCH --cpus-per-task=4     # Number of CPUs per task
+#SBATCH --mem=32G             # Memory per node
+#SBATCH --job-name=remove_blacklist
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=%x-%J-%u.err
+#SBATCH --output=%x-%J-%u.out
+
+module --force purge
+module load biocontainers
+module load bedtools
+module load samtools
+
+# Define paths
+FILTERED_BAM_DIR="/depot/edykhui/data/ming/atac_seq/filtered_bam"
+BLACKLIST_FILTERED_DIR="/depot/edykhui/data/ming/atac_seq/blacklist_filtered"
+BLACKLIST="/depot/edykhui/data/ming/blacklist/hg38-blacklist.v2.bed" 
+
+# Create output directory for BAM files with blacklist regions removed
+mkdir -p $BLACKLIST_FILTERED_DIR
+
+# Function to remove blacklist regions for a sample
+remove_blacklist_regions() {
+    local sample_name=$1
+    local bam_file=$FILTERED_BAM_DIR/${sample_name}.filtered.bam
+    local output_bam_file=$BLACKLIST_FILTERED_DIR/${sample_name}.blacklist_filtered.bam
+    local tmp_bam_file=$BLACKLIST_FILTERED_DIR/${sample_name}.tmp.bam
+    
+    if [ ! -f "$bam_file" ]; then
+        echo "$(date): BAM file $bam_file does not exist, skipping..."
+        return
+    fi
+    
+    echo "$(date): Removing blacklist regions for $sample_name..."
+    bedtools intersect -nonamecheck -v -abam $bam_file -b $BLACKLIST > $tmp_bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): Removing blacklist regions failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    samtools sort -O bam -o $output_bam_file $tmp_bam_file
+    samtools index $output_bam_file
+    rm $tmp_bam_file
+    
+    if [ $? -ne 0 ]; then
+        echo "$(date): Sorting and indexing the BAM file without blacklist regions failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Finished removing blacklist regions for $sample_name."
+}
+
+# List of samples to process
+samples=(
+    "A_RCC4_Empty_1"
+    "A_RCC4_Empty_2"
+    "A_RCC4_Empty_3"
+    "A_RCC4_PB1_1"
+    "A_RCC4_PB1_2"
+    "A_RCC4_PB1_3"
+    "A_RCC4_PB1_VHL_1"
+    "A_RCC4_PB1_VHL_2"
+    "A_RCC4_PB1_VHL_3"
+    "A_RCC4_VHL_1"
+    "A_RCC4_VHL_2"
+    "A_RCC4_VHL_3"
+)
+
+# Process each sample
+for sample in "${samples[@]}"; do
+    remove_blacklist_regions $sample
+done
+
+
+
+
+#############INDEX SORT AND SHIFT READS
+#!/bin/bash
+#SBATCH -A pccr               # Allocation name 
+#SBATCH -t 24:00:00           # Time limit
+#SBATCH -N 1                  # Number of nodes
+#SBATCH -n 1                  # Number of tasks
+#SBATCH --cpus-per-task=4     # Number of CPUs per task
+#SBATCH --mem=32G             # Memory per node
+#SBATCH --job-name=shift_and_sort_read_coordinates
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=%x-%J-%u.err
+#SBATCH --output=%x-%J-%u.out
+
+module --force purge
+module load biocontainers
+module load deeptools
+module load samtools
+
+# Define paths
+BLACKLIST_FILTERED_DIR="/depot/edykhui/data/ming/atac_seq/blacklist_filtered"
+SHIFTED_BAM_DIR="/depot/edykhui/data/ming/atac_seq/shifted_bam"
+BLACKLIST="/depot/edykhui/data/ming/blacklist/hg38-blacklist.v2.bed"
+
+# Create output directory for shifted BAM files
+mkdir -p $SHIFTED_BAM_DIR
+
+# Function to shift and sort read coordinates for a sample
+shift_and_sort_read_coordinates() {
+    local sample_name=$1
+    local bam_file=$BLACKLIST_FILTERED_DIR/${sample_name}.blacklist_filtered.bam
+    local shifted_bam_file=$SHIFTED_BAM_DIR/${sample_name}.shifted.bam
+    local sorted_bam_file=$SHIFTED_BAM_DIR/${sample_name}.shifted.sorted.bam
+    
+    if [ ! -f "$bam_file" ]; then
+        echo "$(date): BAM file $bam_file does not exist, skipping..."
+        return
+    fi
+    
+    echo "$(date): Shifting read coordinates for $sample_name..."
+    alignmentSieve --numberOfProcessors 4 --ATACshift --blackListFileName $BLACKLIST --bam $bam_file -o $shifted_bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): Shifting read coordinates failed for $sample_name" >&2
+        exit 1
+    fi
+
+    echo "$(date): Sorting shifted BAM file for $sample_name..."
+    samtools sort -O bam -o $sorted_bam_file $shifted_bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): Sorting shifted BAM file failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    echo "$(date): Indexing sorted BAM file for $sample_name..."
+    samtools index $sorted_bam_file
+    if [ $? -ne 0 ]; then
+        echo "$(date): Indexing the sorted BAM file failed for $sample_name" >&2
+        exit 1
+    fi
+    
+    # Clean up intermediate files
+    rm $shifted_bam_file
+    
+    echo "$(date): Finished shifting and sorting read coordinates for $sample_name."
+}
+
+# List of samples to process
+samples=(
+    "A_RCC4_Empty_1"
+    "A_RCC4_Empty_2"
+    "A_RCC4_Empty_3"
+    "A_RCC4_PB1_1"
+    "A_RCC4_PB1_2"
+    "A_RCC4_PB1_3"
+    "A_RCC4_PB1_VHL_1"
+    "A_RCC4_PB1_VHL_2"
+    "A_RCC4_PB1_VHL_3"
+    "A_RCC4_VHL_1"
+    "A_RCC4_VHL_2"
+    "A_RCC4_VHL_3"
+)
+
+# Process each sample
+for sample in "${samples[@]}"; do
+    shift_and_sort_read_coordinates $sample
+done
+
+
