@@ -513,4 +513,38 @@ done
 
 
 
+########################MACS
+#!/bin/bash
+#SBATCH -A pccr              # Allocation name
+#SBATCH -t 02:00:00          # Time limit
+#SBATCH -N 1                 # Number of nodes
+#SBATCH -n 4                 # Number of cores
+#SBATCH --job-name=macs2_atacseq
+#SBATCH --mail-type=FAIL,BEGIN,END
+#SBATCH --error=%x-%J-%u.err
+#SBATCH --output=%x-%J-%u.out
 
+module load macs2/2.2.7.1
+
+input_dir="/depot/edykhui/data/ming/atac_seq/shifted_bam_caki2"
+output_dir="/depot/edykhui/data/ming/atac_seq/macs2_caki2"
+genome_size="2.7e9"
+
+mkdir -p $output_dir
+
+for bam_file in ${input_dir}/*.shifted.sorted.bam
+do
+    sample_name=$(basename ${bam_file} .shifted.sorted.bam)
+    
+    macs2 callpeak -t ${bam_file} \
+                   -f BAM \
+                   -g ${genome_size} \
+                   -n ${sample_name} \
+                   --outdir ${output_dir} \
+                   --shift -100 \
+                   --extsize 200 \
+                   -q 0.01 \
+                   --nomodel \
+                   --keep-dup all
+done
+######--SHIFT -100 is important
