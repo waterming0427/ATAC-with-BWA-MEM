@@ -61,7 +61,8 @@ module load bwa/0.7.17
 module load samtools/1.10
 
 # Paths
-REF_GENOME=/path/to/hg38.fasta
+REF_GENOME="/depot/edykhui/data/ming/genome_index/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+
 TRIMMED_DIR=/depot/edykhui/data/ming/atac_seq/trimmed_caki2
 ALIGN_DIR=/depot/edykhui/data/ming/atac_seq/aligned_caki2
 
