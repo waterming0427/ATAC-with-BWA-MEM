@@ -440,8 +440,8 @@ done
 
 module --force purge
 module load biocontainers
-module load deeptools
-module load samtools
+ml biocontainers deeptools
+ml biocontainers samtools
 
 # Define paths
 BLACKLIST_FILTERED_DIR="/depot/edykhui/data/ming/atac_seq/blacklist_filtered"
